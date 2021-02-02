@@ -8,6 +8,30 @@
 // do not include headers in header files (ever).
 
 // C++ headers
+
+
+
+#define NOMINMAX
+#define _USE_MATH_DEFINES
+#include <cmath>
+
+#include <openvdb/openvdb.h>
+#include <openvdb/tools/LevelSetSphere.h>
+#include <openvdb/points/PointConversion.h>
+#include <openvdb/points/PointCount.h>
+#include <openvdb/math/Operators.h>
+#include <openvdb/tools/Interpolation.h>
+
+#include <openvdb/tools/VolumeToMesh.h>
+#include <openvdb/tools/MeshToVolume.h>
+#include <openvdb/tools/GridTransformer.h>
+#include <openvdb/tools/Composite.h>
+#include <openvdb/tools/ParticlesToLevelSet.h>
+#include <openvdb/tools/VolumeToSpheres.h>
+
+
+
+
 #include <chrono>
 #include <fstream>
 #include <vector>

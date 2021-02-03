@@ -67,16 +67,114 @@ struct _cam
 
 } cam;
 
+openvdb::FloatGrid::Ptr Load_cached(const char* file)
+{
+	uint64_t key = (uint64_t)MAPWIDTH << 32 | MAPHEIGHT << 16 | MAPDEPTH;
+	
+	std::stringstream stream;
+	stream << file << "." << key << ".vdb";
+	std::string cachedF(stream.str());
+	//std::cout << "trying " << cachedF <<std::endl;
 
+	if (FileExists(cachedF.c_str()))
+	{
+		openvdb::io::File newFile(cachedF);
+		newFile.open();
+		openvdb::GridBase::Ptr baseGrid = newFile.getGrids()->at(0);
+		openvdb::FloatGrid::Ptr grid = openvdb::gridPtrCast<openvdb::FloatGrid>(baseGrid);
+		newFile.close();
+
+		CoordBBox bbox = grid->evalActiveVoxelBoundingBox();
+		//std::cout << "scale" << bbox.dim() << std::endl;
+
+		return grid;
+	}
+	else
+	{
+		openvdb::io::File newFile(file);
+		newFile.open();
+		openvdb::GridBase::Ptr baseGrid = newFile.getGrids()->at(0);
+		openvdb::FloatGrid::Ptr gridIN = openvdb::gridPtrCast<openvdb::FloatGrid>(baseGrid);
+		newFile.close();
+
+		// rescale into map dims (if needed)
+		CoordBBox bbox = gridIN->evalActiveVoxelBoundingBox();
+		std::cout << "scale" << bbox.dim() << std::endl;
+		float w = bbox.dim().x();
+		float h = bbox.dim().y();
+		float d = bbox.dim().z();
+		w = MAPWIDTH < w ? (float)MAPWIDTH / w : 1;
+		h = MAPHEIGHT < h ? (float)MAPHEIGHT / h : 1;
+		d = MAPDEPTH < d ? (float)MAPDEPTH / d : 1;
+		std::cout << "trying with scale " << w << " " << h << " " << d << " res:" << std::min(std::min(w, h), d) << std::endl;
+
+		openvdb::FloatGrid::Ptr grid;
+		float scale = 0.9 * std::min(std::min(w, h), d);
+		{
+			Timer t;
+			grid = openvdb::FloatGrid::create();
+
+			Vec3d trans;
+			trans.x() = (MAPWIDTH / 2);
+			trans.z() = (MAPDEPTH / 2);
+			trans.y() = (MAPHEIGHT/2);
+
+			openvdb::tools::GridTransformer transformer(Vec3s::zero(), Vec3d(scale, scale, scale), Vec3s::zero(), trans);
+			transformer.transformGrid<openvdb::tools::QuadraticSampler, openvdb::FloatGrid>(*gridIN, *grid);
+
+			grid->tree().prune();
+
+		//	grid->setTransform(gridIN->transformPtr());
+
+			std::cout << " transform " << t.elapsed() << std::endl;
+		}
+
+		
+		openvdb::io::File newFile2(cachedF);
+		newFile2.write({ grid });
+		newFile2.close();
+		
+
+		return grid;
+	}	
+}
 
 // -----------------------------------------------------------
 // Initialize the application
 // -----------------------------------------------------------
-openvdb::FloatGrid::Ptr grid;
 
 float Remap(float value, float from1, float to1, float from2, float to2) {
 	return (value - from1) / (to1 - from1) * (to2 - from2) + from2;
 }
+
+template<typename GridType>
+struct LeafProcessor
+{
+	using TreeType = typename GridType::TreeType;
+	using LeafNode = typename TreeType::ValueOnCIter;
+	using IterRange = openvdb::tree::IteratorRange<typename TreeType::ValueOnCIter>;
+	void operator()(IterRange& range) const
+	{
+		World* world = GetWorld();
+
+		// Note: this code must be thread-safe.
+		// Iterate over a subrange of the leaf iterator's iteration space.
+		for (; range; ++range) {
+			// Retrieve the leaf node to which the iterator is pointing.
+			const openvdb::FloatGrid::ValueOnCIter& iter = range.iterator();
+			// Update the global counter.
+			//activeLeafVoxelCount.fetch_and_add(leaf.onVoxelCount());
+
+			auto c = iter.getCoord();
+			auto ii = c.asVec3I();
+			int x = ii.x();
+			int y = ii.y();
+			int z = ii.z();
+			unsigned char vc = LIGHTBLUE;
+			world->Set(x, y, z, vc);
+		}
+	}
+};
 
 void MyGame::Init()
 {
@@ -87,68 +185,52 @@ void MyGame::Init()
 	// sprites, and so on.
 
 	openvdb::initialize();
+	openvdb::FloatGrid::Ptr grid = Load_cached("C:/Code/vox/bunny_cloud.vdb");
 
-	// Load the vdb
-	openvdb::io::File newFile("C:/Code/vox/bunny_cloud.vdb");
-	newFile.open();
-	openvdb::GridBase::Ptr baseGrid = newFile.getGrids()->at(0);
-	openvdb::FloatGrid::Ptr gridIN = openvdb::gridPtrCast<openvdb::FloatGrid>(baseGrid);
-	newFile.close();
 
-	// rescale into map dims (if needed)
-	CoordBBox bbox = gridIN->evalActiveVoxelBoundingBox();
-	//std::cout << "scale" << bbox.dim() << std::endl;
-	float w = bbox.dim().x();
-	float h = bbox.dim().y();
-	float d = bbox.dim().z();
-	w = MAPWIDTH < w ? (float)MAPWIDTH / w : 1;
-	h = MAPHEIGHT < h ? (float)MAPHEIGHT / h : 1;
-	d = MAPDEPTH < d ? (float) MAPDEPTH / d : 1;
-	//std::cout << "trying with scale " << w << " " << h << " " << d << " res:" << std::min(std::min(w, h), d) << std::endl;
-	
-	float scale = 0.9*std::min(std::min(w, h), d);
-	if (scale != 1.0f)
+#if 0
+	World* world = GetWorld();	
 	{
-		grid = openvdb::FloatGrid::create(); 		
-
-		Mat4d m = Mat4d::identity();
-		m.postScale(Vec3d(scale, scale, scale));
-
-		openvdb::Mat4R xform = m; 
-		openvdb::tools::GridTransformer transformer(xform);
-		transformer.transformGrid<openvdb::tools::QuadraticSampler, openvdb::FloatGrid>(
-			*gridIN, *grid);
-		//grid->tree().prune();
+		Timer t;
+		using FloatLeafProc = LeafProcessor<openvdb::FloatGrid>;
+		FloatLeafProc proc;
+		FloatLeafProc::IterRange range(grid->tree().cbeginValueOn());
+		tbb::parallel_for(range, proc);
+		std::cout << " inject MT " << t.elapsed() << std::endl;
 	}
-	else
-	{
-		grid = gridIN;
-	}
-	
+#else
 	// inject into map
-	World* world = GetWorld();
-	for (openvdb::FloatGrid::ValueOnCIter iter = grid->cbeginValueOn(); iter; ++iter) 
 	{
-		auto c = iter.getCoord();
-		auto ii = c.asVec3I();
-		int x = ii.x() + MAPWIDTH / 2;
-		int y = ii.y() +MAPHEIGHT / 2;
-		int z = ii.z() +MAPDEPTH / 2;
-	//	if (x > 0 && y > 0 && z > 0)
-	//		if (x < MAPWIDTH  && y < MAPHEIGHT && z < MAPDEPTH)
+		Timer t;
+
+		World* world = GetWorld();
+		int iii = 0;
+		for (openvdb::FloatGrid::ValueOnCIter iter = grid->cbeginValueOn(); iter; ++iter)
 		{
-			float v = *iter;
-			//v *= 0.5;
-			//v += 0.5;
+			auto c = iter.getCoord();
+			auto ii = c.asVec3I();
+			int x = ii.x() ;//+ MAPWIDTH / 2;
+			int y = ii.y() ;//+ MAPHEIGHT / 2;
+			int z = ii.z() ;//+ MAPDEPTH / 2;
+			//	if (x > 0 && y > 0 && z > 0)
+			//		if (x < MAPWIDTH  && y < MAPHEIGHT && z < MAPDEPTH)
+			{
+				float v = *iter;
+				//v *= 0.5;
+				//v += 0.5;
 
-			//v = Remap(v, -.3f, .3f, 0, 1);
+				//v = Remap(v, -.3f, .3f, 0, 1);
 
-			unsigned char vc = LIGHTBLUE;// (unsigned char)(max(min(255, (int)(v * 256.f)), 1));
+				unsigned char vc = LIGHTBLUE;// (unsigned char)(max(min(255, (int)(v * 256.f)), 1));
 
-			world->Set(x, y, z, vc);
-	//		std::cout << *iter << " " << (int)vc << std::endl;
+				world->Set(x, y, z, vc);
+			//	std::cout << c << " " << *iter << std::endl;
+			}
 		}
+		std::cout << " inject ST " << t.elapsed() << std::endl;
 	}
+#endif
+
  }
 
 

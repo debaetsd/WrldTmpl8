@@ -39,6 +39,7 @@
 #include <string>
 #include <thread>
 #include <math.h>
+#include <algorithm>
 #include <assert.h>
 
 // header for AVX, and every technology before it.

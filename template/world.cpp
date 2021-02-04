@@ -41,7 +41,7 @@ World::World( const uint targetID )
 	// prepare a test world
 	grid = commit; // for efficiency, the top-level grid resides in the commit buffer
 	memset( grid, 0, GRIDWIDTH * GRIDHEIGHT * GRIDDEPTH * sizeof( uint ) );
-	DummyWorld();
+	//DummyWorld();
 	LoadSky( "assets/sky_15.hdr", "assets/sky_15.bin" );
 	brickBuffer->CopyToDevice();
 	ClearMarks(); // clear 'modified' bit array
@@ -479,7 +479,10 @@ void World::Commit()
 		*idx++ = (uint)i; // store index of modified brick at start of commit buffer
 		StreamCopy( (__m256i*)dst, (__m256i*)(brick + i * BRICKSIZE), BRICKSIZE );
 		dst += BRICKSIZE, tasks++;
+		CleanDirty(i);
+		if (tasks >= MAXCOMMITS - 1) goto stopit;
 	}
+	stopit:
 	// asynchroneously copy the CPU data to the GPU via the commit buffer
 	if (tasks > 0 || firstFrame)
 	{
@@ -502,7 +505,7 @@ void World::Commit()
 		firstFrame = false;
 	}
 	// reset the bitfield for the next frame
-	ClearMarks();
+	//ClearMarks();
 }
 
 // World::StreamCopyMT

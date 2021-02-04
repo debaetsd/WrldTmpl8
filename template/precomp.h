@@ -30,6 +30,7 @@
 #include <openvdb/tools/VolumeToSpheres.h>
 
 
+#pragma comment(lib, "Comdlg32.lib") // filepicker
 
 
 #include <chrono>
@@ -74,6 +75,9 @@ using namespace std;
 // tool includes
 #include <FreeImage.h>			// image loading. http://freeimage.sourceforge.net
 
+#include "imgui_impl_glfw.h"
+#include "imgui_impl_opengl3.h"
+
 // namespaces
 namespace Tmpl8 { class World; };
 using namespace Tmpl8;
@@ -91,7 +95,6 @@ typedef int BOOL;				// for freeimage.h
 
 namespace Tmpl8
 {
-
 // 32-bit surface container
 class Surface
 {
@@ -209,7 +212,7 @@ void BindVBO( const uint idx, const uint N, const GLuint id );
 void CheckShader( GLuint shader, const char* vshader, const char* fshader );
 void CheckProgram( GLuint id, const char* vshader, const char* fshader );
 void DrawQuad();
-
+GLFWwindow* GetWindow();
 // timer
 struct Timer
 {
@@ -617,6 +620,8 @@ inline float4 smoothstep( float4 a, float4 b, float4 x )
 	float4 y = clamp( (x - a) / (b - a), 0.0f, 1.0f );
 	return (y * y * (make_float4( 3.0f ) - (make_float4( 2.0f ) * y)));
 }
+
+inline bool operator!=(float3 a, float3 b) { return (a.x != b.x) || (a.y != b.y) || (a.z != b.z); }
 
 // axis aligned bounding box class
 class aabb
@@ -1124,6 +1129,7 @@ void MortonToXYZ( const uint m, uint& x, uint& y, uint& z )
 // voxel world engine
 #include "world.h"
 World* GetWorld();
+
 
 // game
 class Game

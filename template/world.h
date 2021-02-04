@@ -128,6 +128,7 @@ public:
 	#endif
 	}
 	bool IsDirty( const uint idx ) { return (modified[idx >> 5] & (1 << (idx & 31))) > 0; }
+	bool CleanDirty(const uint idx) { return modified[idx >> 5] &= ~(1 << (idx & 31)) ; }
 	bool IsDirty32( const uint idx ) { return modified[idx] != 0; }
 	void ClearMarks() { memset( modified, 0, (BRICKCOUNT / 32) * 4 ); }
 	// helpers

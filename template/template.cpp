@@ -23,6 +23,12 @@ extern "C"
 #endif
 
 static GLFWwindow* window = 0;
+
+GLFWwindow* GetWindow()
+{
+	return window;
+}
+
 static bool hasFocus = true, running = true;
 static GLTexture* renderTarget = 0;
 static int scrwidth = 0, scrheight = 0;
@@ -113,6 +119,14 @@ void main()
 	Shader* shader = new Shader(
 		"#version 330\nin vec4 p;\nin vec2 t;out vec2 u;void main(){u=t;gl_Position=p;}",
 		"#version 330\nuniform sampler2D c;in vec2 u;out vec4 f;void main(){f=sqrt(texture(c,u));}", true );
+
+
+	IMGUI_CHECKVERSION();
+	ImGui::CreateContext();
+	ImGui::StyleColorsDark();
+	ImGui_ImplGlfw_InitForOpenGL(window, true);
+	ImGui_ImplOpenGL3_Init("#version 330");
+
 	world = new World( renderTarget->ID );
 	game->Init();
 	// done, enter main loop
@@ -123,8 +137,15 @@ void main()
 		deltaTime = min( 500.0f, 1000.0f * timer.elapsed() );
 		// printf( "%f6.3f\n", deltaTime );
 		timer.reset();
+
+		ImGui_ImplOpenGL3_NewFrame();
+		ImGui_ImplGlfw_NewFrame();
+		ImGui::NewFrame();
+
 		world->Render();
 		game->Tick( deltaTime );
+
+
 		world->Commit();
 	#ifdef USE_CPU_DEVICE
 		// copy the destination buffer to the renderTarget texture
@@ -134,12 +155,20 @@ void main()
 		shader->SetInputTexture( 0, "c", renderTarget );
 		DrawQuad();
 		shader->Unbind();
+
+		ImGui::Render();
+		ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
 		glfwSwapBuffers( window );
 		glfwPollEvents();
+
 		if (!running) break;
 	}
 	// close down
-	glfwDestroyWindow( window );
+	ImGui_ImplOpenGL3_Shutdown();
+	ImGui_ImplGlfw_Shutdown();
+	ImGui::DestroyContext(); 
+	glfwDestroyWindow(window);
 	glfwTerminate();
 }
 

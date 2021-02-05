@@ -36,6 +36,12 @@
 #define LIGHTBLUE	(3+(4<<2)+(4<<5))
 #define BROWN		((3<<5)+(1<<2))
 
+typedef ushort payload;
+inline bool IsPayloadEmpty(payload p)
+{
+	return p == 0;
+}
+
 // renderer
 struct RenderParams
 {
@@ -58,8 +64,12 @@ struct RenderParams
 #define GRIDDEPTH	(MAPDEPTH / BRICKDIM)
 #define GRIDSIZE	(GRIDWIDTH * GRIDHEIGHT * GRIDWIDTH)
 #define BRICKSIZE	(BRICKDIM * BRICKDIM * BRICKDIM)
+#define BRICKMEMSIZE	(BRICKDIM * BRICKDIM * BRICKDIM * sizeof(payload))
 #define BRICKCOUNT	((MAPWIDTH / BRICKDIM) * (MAPHEIGHT / BRICKDIM) * (MAPDEPTH / BRICKDIM))
-#define BRICKCOMMITSIZE	(MAXCOMMITS * BRICKSIZE + MAXCOMMITS * 4 /* bytes */)
+#define BRICKCOMMITSIZE	(MAXCOMMITS * BRICKMEMSIZE + MAXCOMMITS * 4 /* bytes */) // 4 == sizeof(uint) because idx list in front of commit buffer is 
+#define BMSK		(BRICKDIM - 1)
+#define BRICKDIMSQ		(BRICKDIM * BRICKDIM)
+
 
 // constants
 #define PI			3.14159265358979323846264f

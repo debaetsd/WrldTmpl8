@@ -31,8 +31,8 @@ World::World( const uint targetID )
 	desc.image_depth = MAPDEPTH / BRICKDIM;
 	gridMap = clCreateImage( Kernel::GetContext(), CL_MEM_HOST_NO_ACCESS, &fmt, &desc, 0, 0 );
 	// create brick storage
-	brick = (uchar*)_aligned_malloc( BRICKCOUNT * BRICKSIZE, 64 );
-	brickBuffer = new Buffer( (BRICKCOUNT * BRICKSIZE) / 4, Buffer::DEFAULT, brick );
+	brick = (payload*)_aligned_malloc( BRICKCOUNT * BRICKMEMSIZE, 64 );
+	brickBuffer = new Buffer( (BRICKCOUNT * BRICKMEMSIZE), Buffer::DEFAULT, brick );
 	brickInfo = new BrickInfo[BRICKCOUNT];
 	// create a cyclic array for unused bricks (all of them, for now)
 	trash = new uint[BRICKCOUNT];
@@ -47,7 +47,7 @@ World::World( const uint targetID )
 	ClearMarks(); // clear 'modified' bit array
 	// report memory usage
 	printf( "Allocated %iMB on CPU and GPU for the top-level grid.\n", (int)(gridSize >> 20) );
-	printf( "Allocated %iMB on CPU and GPU for %ik bricks.\n", (int)((BRICKCOUNT * BRICKSIZE) >> 20), (int)(BRICKCOUNT >> 10) );
+	printf( "Allocated %iMB on CPU and GPU for %ik bricks.\n", (int)((BRICKCOUNT * BRICKMEMSIZE) >> 20), (int)(BRICKCOUNT >> 10) );
 	printf( "Allocated %iMB on CPU and GPU for commits.\n", (int)(commitSize >> 20) );
 	printf( "Allocated %iKB on CPU for bitfield.\n", (int)(BRICKCOUNT >> 15) );
 	printf( "Allocated %iMB on CPU for brickInfo.\n", (int)((BRICKCOUNT * sizeof( BrickInfo )) >> 20) );
@@ -55,7 +55,7 @@ World::World( const uint targetID )
 	renderer = new Kernel( "cl/kernels.cl", "render" );
 	committer = new Kernel( renderer->GetProgram(), "commit" );
 	screen = new Buffer( targetID, Buffer::TARGET );
-	paramBuffer = new Buffer( sizeof( RenderParams ) / 4, Buffer::DEFAULT | Buffer::READONLY, &params );
+	paramBuffer = new Buffer( sizeof( RenderParams ), Buffer::DEFAULT | Buffer::READONLY, &params );
 	renderer->SetArgument( 0, screen );
 	renderer->SetArgument( 1, paramBuffer );
 	renderer->SetArgument( 2, &gridMap );
@@ -71,7 +71,7 @@ World::World( const uint targetID )
 	for (int i = 0; i < (128 * 128 * 8); i++) data32[i + 65536] = data8[i];
 	data8 = (uchar*)rnk256_64;
 	for (int i = 0; i < (128 * 128 * 8); i++) data32[i + 3 * 65536] = data8[i];
-	blueNoise = new Buffer( 65536 * 5, Buffer::READONLY, data32 );
+	blueNoise = new Buffer( 65536 * 5 * sizeof(uint), Buffer::READONLY, data32 );
 	blueNoise->CopyToDevice();
 	delete data32;
 	renderer->SetArgument( 5, blueNoise );
@@ -189,7 +189,7 @@ void World::LoadSky( const char* filename, const char* bin_name )
 		);
 	FREE64( pixels );
 	// load a sky dome
-	sky = new Buffer( skySize.x * skySize.y * 4, Buffer::READONLY, pixel4 );
+	sky = new Buffer( skySize.x * skySize.y * sizeof(float4), Buffer::READONLY, pixel4 );
 	sky->CopyToDevice();
 }
 
@@ -479,8 +479,8 @@ void World::Commit()
 			const uint i = j * 32 + k;
 			if (!IsDirty( i )) continue;
 			*idx++ = (uint)i; // store index of modified brick at start of commit buffer
-			StreamCopy( (__m256i*)dst, (__m256i*)(brick + i * BRICKSIZE), BRICKSIZE );
-			dst += BRICKSIZE, tasks++;
+			StreamCopy( (__m256i*)dst, (__m256i*)(brick + i * BRICKSIZE), BRICKMEMSIZE);
+			dst += BRICKMEMSIZE, tasks++;
 		}
 		ClearMarks32( j );
 		if (tasks + 32 >= MAXCOMMITS) break; // we have too many commits; postpone

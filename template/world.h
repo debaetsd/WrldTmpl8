@@ -49,7 +49,7 @@ public:
 	uint SpriteFrameCount( const uint idx );
 	void MoveSpriteTo( const uint idx, const uint x, const uint y, const uint z, const uint frame = 0 );
 	// low-level voxel access
-	__forceinline uint Get( const uint x, const uint y, const uint z )
+	__forceinline payload Get( const uint x, const uint y, const uint z )
 	{
 		// calculate brick location in top-level grid
 		const uint bx = (x / BRICKDIM) & (GRIDWIDTH - 1);
@@ -59,10 +59,10 @@ public:
 		const uint g = grid[cellIdx];
 		if ((g & 1) == 0 /* this is currently a 'solid' grid cell */) return g >> 1;
 		// calculate the position of the voxel inside the brick
-		const uint lx = x & (BRICKDIM - 1), ly = y & (BRICKDIM - 1), lz = z & (BRICKDIM - 1);
-		return brick[(g >> 1) * BRICKSIZE + lx + ly * BRICKDIM + lz * BRICKDIM * BRICKDIM];
+		const uint lx = x & BMSK, ly = y & BMSK, lz = z & BMSK;
+		return brick[(g >> 1) * BRICKSIZE + lx + ly * BRICKDIM + lz * BRICKDIMSQ];
 	}
-	__forceinline void Set( const uint x, const uint y, const uint z, const uint v /* actually an 8-bit value */ )
+	__forceinline void Set( const uint x, const uint y, const uint z, const payload v /* actually an 8-bit value */ )
 	{
 		// calculate brick location in top-level grid
 		const uint bx = x / BRICKDIM & (GRIDWIDTH - 1);
@@ -82,7 +82,7 @@ public:
 			// slightly faster to not prevent false sharing if we're doing single core updates only
 			const uint newIdx = trash[trashTail++ & (BRICKCOUNT - 1)];
 		#endif
-		#if BRICKDIM == 8
+		#if 0 //BRICKDIM == 8
 			// fully unrolled loop for writing the 512 bytes needed for a single brick, faster than memset
 			const __m256i zero8 = _mm256_set1_epi8( static_cast<char>(g1) );
 			__m256i* d8 = (__m256i*)(brick + newIdx * BRICKSIZE);
@@ -92,7 +92,7 @@ public:
 			d8[12] = zero8, d8[13] = zero8, d8[14] = zero8, d8[15] = zero8;
 		#else
 			// let's keep the memset in case we want to experiment with other brick sizes
-			memset( brick + newIdx * BRICKSIZE, g1, BRICKSIZE ); // copy solid value to brick
+			memset( brick + newIdx * BRICKSIZE, g1, BRICKMEMSIZE); // copy solid value to brick
 		#endif
 			// we keep track of the number of zeroes, so we can remove fully zeroed bricks
 			brickInfo[newIdx].zeroes = g == 0 ? BRICKSIZE : 0;
@@ -100,8 +100,8 @@ public:
 			// brickInfo[newIdx].location = cellIdx; // not used yet
 		}
 		// calculate the position of the voxel inside the brick
-		const uint lx = x & (BRICKDIM - 1), ly = y & (BRICKDIM - 1), lz = z & (BRICKDIM - 1);
-		const uint voxelIdx = g1 * BRICKSIZE + lx + ly * BRICKDIM + lz * BRICKDIM * BRICKDIM;
+		const uint lx = x & BMSK, ly = y & BMSK, lz = z & BMSK;
+		const uint voxelIdx = g1 * BRICKSIZE + lx + ly * BRICKDIM + lz * BRICKDIMSQ;
 		const uint cv = brick[voxelIdx];
 		if ((brickInfo[g1].zeroes += (cv != 0 && v == 0) - (cv == 0 && v != 0)) < BRICKSIZE)
 		{
@@ -157,7 +157,7 @@ public:
 	mat4 camMat;						// camera matrix to be used for rendering
 	uint* grid = 0;						// pointer to host-side copy of the top-level grid
 	Buffer* brickBuffer;				// OpenCL buffer for the bricks
-	uchar* brick = 0;					// pointer to host-side copy of the bricks
+	payload* brick = 0;					// pointer to host-side copy of the bricks
 	uint* modified = 0;					// bitfield to mark bricks for synchronization
 	BrickInfo* brickInfo = 0;			// maintenance data for bricks: zeroes, location
 	volatile inline static LONG trashHead = BRICKCOUNT;	// thrash circular buffer tail

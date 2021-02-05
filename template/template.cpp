@@ -120,13 +120,13 @@ void main()
 		"#version 330\nin vec4 p;\nin vec2 t;out vec2 u;void main(){u=t;gl_Position=p;}",
 		"#version 330\nuniform sampler2D c;in vec2 u;out vec4 f;void main(){f=sqrt(texture(c,u));}", true );
 
-
+#if IMGUI
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
 	ImGui::StyleColorsDark();
 	ImGui_ImplGlfw_InitForOpenGL(window, true);
 	ImGui_ImplOpenGL3_Init("#version 330");
-
+#endif
 	world = new World( renderTarget->ID );
 	game->Init();
 	// done, enter main loop
@@ -137,11 +137,11 @@ void main()
 		deltaTime = min( 500.0f, 1000.0f * timer.elapsed() );
 		// printf( "%f6.3f\n", deltaTime );
 		timer.reset();
-
+#if IMGUI
 		ImGui_ImplOpenGL3_NewFrame();
 		ImGui_ImplGlfw_NewFrame();
 		ImGui::NewFrame();
-
+#endif
 		world->Render();
 		game->Tick( deltaTime );
 
@@ -155,19 +155,21 @@ void main()
 		shader->SetInputTexture( 0, "c", renderTarget );
 		DrawQuad();
 		shader->Unbind();
-
+#if IMGUI
 		ImGui::Render();
 		ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-
+#endif
 		glfwSwapBuffers( window );
 		glfwPollEvents();
 
 		if (!running) break;
 	}
 	// close down
+#if IMGUI
 	ImGui_ImplOpenGL3_Shutdown();
 	ImGui_ImplGlfw_Shutdown();
 	ImGui::DestroyContext(); 
+#endif
 	glfwDestroyWindow(window);
 	glfwTerminate();
 }
@@ -887,7 +889,7 @@ Buffer::Buffer( unsigned int N, unsigned int t, void* ptr )
 	{
 		size = N;
 		textureID = 0; // not representing a texture
-		deviceBuffer = clCreateBuffer( Kernel::GetContext(), rwFlags, size * 4, 0, 0 );
+		deviceBuffer = clCreateBuffer( Kernel::GetContext(), rwFlags, size , 0, 0 );
 		hostBuffer = (uint*)ptr;
 	}
 	else
@@ -914,7 +916,7 @@ Buffer::~Buffer()
 void Buffer::CopyToDevice( bool blocking )
 {
 	cl_int error;
-	CHECKCL( error = clEnqueueWriteBuffer( Kernel::GetQueue(), deviceBuffer, blocking, 0, size * 4, hostBuffer, 0, 0, 0 ) );
+	CHECKCL( error = clEnqueueWriteBuffer( Kernel::GetQueue(), deviceBuffer, blocking, 0, size , hostBuffer, 0, 0, 0 ) );
 }
 
 // CopyToDevice2 method (uses 2nd queue)
@@ -922,7 +924,7 @@ void Buffer::CopyToDevice( bool blocking )
 void Buffer::CopyToDevice2( bool blocking, cl_event* eventToSet, const size_t s )
 {
 	cl_int error;
-	CHECKCL( error = clEnqueueWriteBuffer( Kernel::GetQueue2(), deviceBuffer, blocking ? CL_TRUE : CL_FALSE, 0, s == 0 ? (size * 4) : (s * 4), hostBuffer, 0, 0, eventToSet ) );
+	CHECKCL( error = clEnqueueWriteBuffer( Kernel::GetQueue2(), deviceBuffer, blocking ? CL_TRUE : CL_FALSE, 0, s == 0 ? (size) : (s * 4), hostBuffer, 0, 0, eventToSet ) );
 }
 
 // CopyFromDevice method
@@ -930,14 +932,14 @@ void Buffer::CopyToDevice2( bool blocking, cl_event* eventToSet, const size_t s 
 void Buffer::CopyFromDevice( bool blocking )
 {
 	cl_int error;
-	CHECKCL( error = clEnqueueReadBuffer( Kernel::GetQueue(), deviceBuffer, blocking, 0, size * 4, hostBuffer, 0, 0, 0 ) );
+	CHECKCL( error = clEnqueueReadBuffer( Kernel::GetQueue(), deviceBuffer, blocking, 0, size , hostBuffer, 0, 0, 0 ) );
 }
 
 // CopyTo
 // ----------------------------------------------------------------------------
 void Buffer::CopyTo( Buffer* buffer )
 {
-	clEnqueueCopyBuffer( Kernel::GetQueue(), deviceBuffer, buffer->deviceBuffer, 0, 0, size * 4, 0, 0, 0 );
+	clEnqueueCopyBuffer( Kernel::GetQueue(), deviceBuffer, buffer->deviceBuffer, 0, 0, size , 0, 0, 0 );
 }
 
 // Clear
@@ -950,7 +952,7 @@ void Buffer::Clear()
 	CopyToDevice();
 #else
 	cl_int error;
-	CHECKCL( error = clEnqueueFillBuffer( Kernel::GetQueue(), deviceBuffer, &value, 4, 0, size * 4, 0, 0, 0 ) );
+	CHECKCL( error = clEnqueueFillBuffer( Kernel::GetQueue(), deviceBuffer, &value, 4, 0, size , 0, 0, 0 ) );
 #endif
 }
 

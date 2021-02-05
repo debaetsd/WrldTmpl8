@@ -15,6 +15,7 @@
 #define _USE_MATH_DEFINES
 #include <cmath>
 
+#ifndef _DEBUG
 #include <openvdb/openvdb.h>
 #include <openvdb/tools/LevelSetSphere.h>
 #include <openvdb/points/PointConversion.h>
@@ -28,7 +29,7 @@
 #include <openvdb/tools/Composite.h>
 #include <openvdb/tools/ParticlesToLevelSet.h>
 #include <openvdb/tools/VolumeToSpheres.h>
-
+#endif
 
 #pragma comment(lib, "Comdlg32.lib") // filepicker
 
@@ -76,8 +77,15 @@ using namespace std;
 // tool includes
 #include <FreeImage.h>			// image loading. http://freeimage.sourceforge.net
 
+#ifndef _DEBUG
+#define IMGUI 1
+#else
+#define IMGUI 0
+#endif
+#if IMGUI
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
+#endif 
 
 // namespaces
 namespace Tmpl8 { class World; };

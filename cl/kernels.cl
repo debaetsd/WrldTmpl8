@@ -9,8 +9,9 @@
 #define DIR_Y		(((bits >> 8) & 3) - 1)		// ray dir over y (-1 or 1)
 #define DIR_Z		(((bits >> 16) & 3) - 1)	// ray dir over z (-1 or 1)
 #define EPS			1e-8
-#define BMSK		(BRICKDIM - 1)
-#define BDIM2		(BRICKDIM * BRICKDIM)
+
+
+
 #define BPMX		(MAPWIDTH - BRICKDIM)
 #define BPMY		(MAPHEIGHT - BRICKDIM)
 #define BPMZ		(MAPDEPTH - BRICKDIM)
@@ -26,7 +27,7 @@ float4 FixZeroDeltas( float4 V )
 }
 
 // mighty two-level grid traversal
-uint TraceRay( const float4 A, const float4 B, float* dist, float3* N, __read_only image3d_t grid, __global const unsigned char* brick, int steps )
+payload TraceRay( const float4 A, const float4 B, float* dist, float3* N, __read_only image3d_t grid, __global const payload* brick, int steps )
 {
 	const float4 V = FixZeroDeltas( B ), rV = (float4)(1.0 / V.x, 1.0 / V.y, 1.0 / V.z, 1);
 	uint4 pos = (uint4)(clamp( (int)A.x, 0, MAPWIDTH - 1 ), clamp( (int)A.y, 0, MAPHEIGHT - 1 ), clamp( (int)A.z, 0, MAPDEPTH - 1 ), 0);
@@ -57,9 +58,9 @@ uint TraceRay( const float4 A, const float4 B, float* dist, float3* N, __read_on
 			float dmz = (float)((p & 1023) + OFFS_Z - A.z) * rV.z, d = t;
 			do
 			{
-				const uint idx = (o >> 1) * BRICKSIZE + ((p >> 20) & BMSK) + ((p >> 10) & BMSK) * BRICKDIM + (p & BMSK) * BDIM2;
-				const unsigned int color = brick[idx];
-				if (color != 0U) 
+				const uint idx = (o >> 1) * BRICKSIZE + ((p >> 20) & BMSK) + ((p >> 10) & BMSK) * BRICKDIM + (p & BMSK) * BRICKDIMSQ;
+				const payload color = brick[idx];
+				if (IsPayloadEmpty(color) == false) 
 				{ 
 					*dist = d, *N = -(float3)( (last == 0) * DIR_X, (last == 1) * DIR_Y, (last == 2) * DIR_Z );
 					return color; 
@@ -125,7 +126,7 @@ float blueNoiseSampler( const __global uint* blueNoise, int x, int y, int sample
 #define GIRAYS	8
 
 __kernel void render( write_only image2d_t outimg, __constant struct RenderParams* params,
-	__read_only image3d_t grid, __global unsigned char* brick, __global float4* sky, __global const uint* blueNoise )
+	__read_only image3d_t grid, __global payload* brick, __global float4* sky, __global const uint* blueNoise )
 {
 	// produce primary ray for pixel
 	const int column = get_global_id( 0 );
@@ -137,11 +138,11 @@ __kernel void render( write_only image2d_t outimg, __constant struct RenderParam
 	// trace primary ray
 	float dist;
 	float3 N;
-	const uint voxel = TraceRay( (float4)(params->E, 1), (float4)(D, 1), &dist, &N, grid, brick, 256 );
+	const payload voxel = TraceRay( (float4)(params->E, 1), (float4)(D, 1), &dist, &N, grid, brick, 256 );
 
 	// visualize result
 	float3 pixel;
-	if (voxel == 0)
+	if (IsPayloadEmpty(voxel))
 	{
 		// sky
 		const float3 T = (float3)(D.x, D.z, D.y);
@@ -164,8 +165,8 @@ __kernel void render( write_only image2d_t outimg, __constant struct RenderParam
 			const float4 R = (float4)( DiffuseReflectionCosWeighted( r0, r1, N ), 1 );
 			float3 N2;
 			float dist2;
-			const uint voxel2 = TraceRay( I + 0.1f * (float4)( N, 1 ), R, &dist2, &N2, grid, brick, 10 );
-			if (voxel2 == 0)
+			const payload voxel2 = TraceRay( I + 0.1f * (float4)( N, 1 ), R, &dist2, &N2, grid, brick, 10 );
+			if (IsPayloadEmpty(voxel2))
 			{
 				// sky
 				const float3 T = (float3)(R.x, R.z, R.y);
@@ -224,9 +225,9 @@ __kernel void commit( const int taskCount, __global uint* commit, __global uint*
 	if (task < taskCount)
 	{
 		int brickId = commit[task + GRIDSIZE];
-		__global uint* src = commit + MAXCOMMITS + GRIDSIZE + task * BRICKSIZE / 4;
-		__global uint* dst = brick + brickId * BRICKSIZE / 4;
-		for (int i = 0; i < BRICKSIZE / 4; i++) dst[i] = src[i];
+		__global uint* src = commit + MAXCOMMITS + GRIDSIZE + task * BRICKMEMSIZE / 4;
+		__global uint* dst = brick + brickId * BRICKMEMSIZE / 4;
+		for (int i = 0; i < BRICKMEMSIZE / 4; i++) dst[i] = src[i];
 	}
 }
 

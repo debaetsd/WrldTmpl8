@@ -1,7 +1,7 @@
 # Testing OpenVDB importing and rendering
 
-![ScreenShot](vol3.png)
-![ScreenShot](dragon.png)
+![ScreenShot](vol3.PNG)
+![ScreenShot](dragon.PNG)
 
 Starting from the World template by Jacco Bikker (see below), I added the ability to import OpenVDB grids and do a raymarching visualisation off it.
 

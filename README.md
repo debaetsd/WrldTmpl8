@@ -1,4 +1,21 @@
-# BRIEF INFO ON THE 2021 WORLD TEMPLATE
+# Testing OpenVDB importing and rendering
+
+![ScreenShot](vol3.png)
+![ScreenShot](dragon.png)
+
+Starting from the World template by Jacco Bikker (see below), I added the ability to import OpenVDB grids and do a raymarching visualisation off it.
+
+- OpenVDB importing
+- Volumetric raymarching
+- ImGUI integration
+- programmable payload (no hardcoded 8bit/voxel)
+
+
+more screenshots and info at https://twitter.com/dieter_debaets
+
+
+
+# [ORIGINAL] BRIEF INFO ON THE 2021 WORLD TEMPLATE
 
 *Purpose:*
 

@@ -78,6 +78,9 @@ public:
 	uint SpriteFrameCount( const uint idx );
 	void MoveSpriteTo( const uint idx, const uint x, const uint y, const uint z );
 	void SetSpriteFrame( const uint idx, const uint frame );
+
+	RenderParams& GetParams() { return params; }
+
 private:
 	void RemoveSprite( const uint idx );
 	void DrawSprite( const uint idx );
@@ -116,7 +119,7 @@ public:
 			// slightly faster to not prevent false sharing if we're doing single core updates only
 			const uint newIdx = trash[trashTail++ & (BRICKCOUNT - 1)];
 		#endif
-		#if 0 //BRICKDIM == 8
+		#if 0 // BRICKDIM == 8	
 			// fully unrolled loop for writing the 512 bytes needed for a single brick, faster than memset
 			const __m256i zero8 = _mm256_set1_epi8( static_cast<char>(g1) );
 			__m256i* d8 = (__m256i*)(brick + newIdx * BRICKSIZE);
@@ -137,7 +140,7 @@ public:
 		const uint lx = x & BMSK, ly = y & BMSK, lz = z & BMSK;
 		const uint voxelIdx = g1 * BRICKSIZE + lx + ly * BRICKDIM + lz * BRICKDIMSQ;
 		const uint cv = brick[voxelIdx];
-		if ((brickInfo[g1].zeroes += (cv != 0 && v == 0) - (cv == 0 && v != 0)) < BRICKSIZE)
+		if ((brickInfo[g1].zeroes += (!IsPayloadEmpty(cv) && v == 0) - (IsPayloadEmpty(cv) && v != 0)) < BRICKSIZE)
 		{
 			brick[voxelIdx] = v;
 			Mark( g1 ); // tag to be synced with GPU

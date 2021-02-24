@@ -96,14 +96,97 @@ namespace util
 
 	};
 
+
 }
 
 namespace vdb
 {
+	
+	openvdb::FloatGrid::Ptr Transform(openvdb::FloatGrid::Ptr gridIN, float3 trans, float3 rot, float3 scale)
+	{
+		openvdb::FloatGrid::Ptr grid = openvdb::FloatGrid::create();
+
+		Vec3d vdbT = Vec3d(trans.x,trans.y, trans.z);
+		Vec3d vdbS = Vec3d(scale.x, scale.y, scale.z);
+		Vec3d vdbR = Vec3d(rot.x, rot.y, rot.z);
+
+		openvdb::tools::GridTransformer transformer(Vec3s::zero(), vdbS, vdbR, vdbT);
+		transformer.transformGrid<openvdb::tools::QuadraticSampler, openvdb::FloatGrid>(*gridIN, *grid);
+
+		CoordBBox bbox = grid->evalActiveVoxelBoundingBox();
+		printf("Dimensions: [%d,%d,%d]x[%d,%d,%d] -> [%dx%dx%d]\n",
+			(int)bbox.min().x(), (int)bbox.min().y(), (int)bbox.min().z(),
+			(int)bbox.max().x(), (int)bbox.max().y(), (int)bbox.max().z(),
+			(int)bbox.dim().x(), (int)bbox.dim().y(), (int)bbox.dim().z());
+
+		grid->tree().prune();
+		return grid;
+	}
+
+	void Inject(openvdb::FloatGrid::Ptr grid)
+	{
+		Timer t;
+		struct Injector
+		{
+			openvdb::FloatGrid::Ptr grid;
+			float min, max;
+
+			float Remap(float value, float from1, float to1, float from2, float to2) const
+			{
+				return (value - from1) / (to1 - from1) * (to2 - from2) + from2;
+			}
+
+			using TreeType = typename openvdb::FloatGrid::TreeType;
+			using LeafNode = typename TreeType::ValueOnCIter;
+			using IterRange = openvdb::tree::IteratorRange<typename TreeType::ValueOnCIter>;
+			void operator()(IterRange& range) const
+			{
+				for (; range; ++range)
+				{
+					const openvdb::FloatGrid::ValueOnCIter& iter = range.iterator();
+					auto coord = iter.getCoord();
+					Vec3d wcoord = coord.asVec3d();
+					Vec3i icoord = Vec3i(wcoord);
+					int x = icoord.x();
+					int y = icoord.y();
+					int z = icoord.z();
+					if ((x < MAPWIDTH && x >= 0) && (y < MAPHEIGHT && y >= 0) && (z < MAPDEPTH && z >= 0))
+					{
+						unsigned char vc = LIGHTBLUE;
+						float fval = *iter;
+						fval = Remap(fval, min, max, 0, std::numeric_limits<payload>::max());
+
+ 						payload p = (payload)fval;
+
+						world->Set(x, y, z, p);
+					}
+				}
+			}
+		} proc;
+
+		float min, max;
+		grid->evalMinMax(min, max);
+		std::cout << " Min val " << min << " Max val "<< max << std::endl;
+		RenderParams& p = GetWorld()->GetParams();
+		p.dims = make_float2(min, max);
+
+		proc.grid = grid;
+		proc.min = min;
+		proc.max = max;
+
+		tbb::parallel_for(Injector::IterRange(grid->tree().cbeginValueOn()), proc);
+		std::cout << " inject MT " << t.elapsed() << std::endl;
+	}
+
 	struct ImportingFile
 	{
+		
 		openvdb::FloatGrid::Ptr grid;
-		CoordBBox bbox;
+		CoordBBox bbox;	
+		float3 trans = make_float3(0);
+		float3 rot = make_float3(0);
+		float scale = 1;
+
 
 		void Open(const char* file)
 		{
@@ -115,136 +198,128 @@ namespace vdb
 
 			bbox = grid->evalActiveVoxelBoundingBox();
 		}
-	};
 
-
-	openvdb::FloatGrid::Ptr Transform(openvdb::FloatGrid::Ptr gridIN, float3 trans, float3 rot, float3 scale)
-	{
-		openvdb::FloatGrid::Ptr grid = openvdb::FloatGrid::create();
-
-		Vec3d vdbT = Vec3d(trans.x, trans.y, trans.z);
-		Vec3d vdbS = Vec3d(scale.x, scale.y, scale.z);
-		Vec3d vdbR = Vec3d(rot.x, rot.y, rot.z);
-
-		openvdb::tools::GridTransformer transformer(Vec3s::zero(), vdbS, vdbR, vdbT);
-		transformer.transformGrid<openvdb::tools::QuadraticSampler, openvdb::FloatGrid>(*gridIN, *grid);
-		grid->tree().prune();
-		return grid;
-	}
-
-	openvdb::FloatGrid::Ptr Load_cached(const char* file, float3 trans, float3 rot, float scale)
-	{
-		uint64_t key = (uint64_t)MAPWIDTH << 32 | MAPHEIGHT << 16 | MAPDEPTH;
-
-		std::stringstream stream;
-		stream << file << "." << key << ".vdb";
-		std::string cachedF(stream.str());
-		//std::cout << "trying " << cachedF <<std::endl;
-
-#if 0
-		if (FileExists(cachedF.c_str()))
+		void Reset()
 		{
-			openvdb::io::File newFile(cachedF);
-			newFile.open();
-			openvdb::GridBase::Ptr baseGrid = newFile.getGrids()->at(0);
-			openvdb::FloatGrid::Ptr grid = openvdb::gridPtrCast<openvdb::FloatGrid>(baseGrid);
-			newFile.close();
-
-			CoordBBox bbox = grid->evalActiveVoxelBoundingBox();
-			//std::cout << "scale" << bbox.dim() << std::endl;
-
-			return grid;
+			grid = nullptr;
+			bbox.reset();
 		}
-		else
-#endif
+
+		static void ImportUI()
 		{
-			openvdb::io::File newFile(file);
-			newFile.open();
-			openvdb::GridBase::Ptr baseGrid = newFile.getGrids()->at(0);
-			openvdb::FloatGrid::Ptr gridIN = openvdb::gridPtrCast<openvdb::FloatGrid>(baseGrid);
-			newFile.close();
+			static ImportingFile* file = nullptr;
+			static char path[MAX_PATH] = "";
 
-			// rescale into map dims (if needed)
-			CoordBBox bbox = gridIN->evalActiveVoxelBoundingBox();
-			std::cout << "scale" << bbox.dim() << std::endl;
-			float w = bbox.dim().x();
-			float h = bbox.dim().y();
-			float d = bbox.dim().z();
-			w = MAPWIDTH < w ? (float)MAPWIDTH / w : 1;
-			h = MAPHEIGHT < h ? (float)MAPHEIGHT / h : 1;
-			d = MAPDEPTH < d ? (float)MAPDEPTH / d : 1;
-			std::cout << "trying with scale " << w << " " << h << " " << d << " res:" << std::min(std::min(w, h), d) << std::endl;
-
-			openvdb::FloatGrid::Ptr grid;
-			float scale = 0.9 * std::min(std::min(w, h), d);
+			if (ImGui::BeginPopup("Import OpenVDB"))
 			{
-				Timer t;
-				grid =  Transform(gridIN, trans, rot, make_float3(scale, scale, scale));
+				ImGui::Text("Import new vdb");				
 
-// 				grid = openvdb::FloatGrid::create();
-// 
-// 				Vec3d trans;
-// 				trans.x() = (MAPWIDTH / 2);
-// 				trans.z() = (MAPDEPTH / 2);
-// 				trans.y() = 0;// (MAPHEIGHT / 2);
-// 
-// 				openvdb::tools::GridTransformer transformer(Vec3s::zero(), Vec3d(scale, scale, scale), Vec3s::zero(), trans);
-// 				transformer.transformGrid<openvdb::tools::QuadraticSampler, openvdb::FloatGrid>(*gridIN, *grid);
-// 
-// 				grid->tree().prune();
-
-				std::cout << " transform " << t.elapsed() << std::endl;
-			}
-
-
-			openvdb::io::File newFile2(cachedF);
-			newFile2.write({ grid });
-			newFile2.close();
-
-
-			return grid;
-		}
-	}
-
-	void Inject(openvdb::FloatGrid::Ptr grid)
-	{
-		Timer t;
-		struct Injector
-		{
-			using TreeType = typename openvdb::FloatGrid::TreeType;
-			using LeafNode = typename TreeType::ValueOnCIter;
-			using IterRange = openvdb::tree::IteratorRange<typename TreeType::ValueOnCIter>;
-			void operator()(IterRange& range) const
-			{
-				for (; range; ++range)
+				bool changed = ImGui::InputText("File", path, MAX_PATH);
+				ImGui::SameLine();
+				if (ImGui::Button("..."))
 				{
-					const openvdb::FloatGrid::ValueOnCIter& iter = range.iterator();
-					auto coord = iter.getCoord();
-					auto icoord = coord.asVec3I();
-					int x = icoord.x();
-					int y = icoord.y();
-					int z = icoord.z();
-					if ((x < MAPWIDTH && x >= 0) && (y < MAPHEIGHT && y >= 0) && (z < MAPDEPTH && z >= 0))
+					const char* picked = util::Filepicker();
+					if (picked)
 					{
-						unsigned char vc = LIGHTBLUE;
-						world->Set(x, y, z, vc);
+						strcpy(path, picked);
+						changed = true;
 					}
 				}
+				
+				if (FileExists(path))
+				{
+					if (changed)
+					{
+						if (file == nullptr)
+						{
+							file = new ImportingFile();
+						}
+						file->Open(path);
+					}
+
+					if (file) 
+					{
+						ImGui::Text("Dimensions: [%d,%d,%d]x[%d,%d,%d] -> [%dx%dx%d]",
+							(int)file->bbox.min().x(), (int)file->bbox.min().y(), (int)file->bbox.min().z(),
+							(int)file->bbox.max().x(), (int)file->bbox.max().y(), (int)file->bbox.max().z(),
+							(int)file->bbox.dim().x(), (int)file->bbox.dim().y(), (int)file->bbox.dim().z());
+
+
+						CoordBBox newBbox = file->bbox;
+
+						ImGui::DragFloat3("Translation", (float*)&file->trans);
+						ImGui::SameLine();
+						if (ImGui::Button("Center"))
+						{
+							Vec3d mi = newBbox.getCenter();
+							file->trans = make_float3(MAPWIDTH >> 1, MAPHEIGHT >> 1, MAPDEPTH >> 1) - make_float3((int)mi.x(), (int)mi.y(), (int)mi.z());
+						}
+
+						//ImGui::DragFloat3("Rotation", (float*)&rot);
+						ImGui::SliderFloat("Scale", &file->scale, 0.01f, 5.f);
+						ImGui::SameLine();
+						if (ImGui::Button("Fit"))
+						{
+							float w = newBbox.dim().x();
+							float h = newBbox.dim().y();
+							float d = newBbox.dim().z();
+							w = MAPWIDTH < w ? (float)MAPWIDTH / w : 1;
+							h = MAPHEIGHT < h ? (float)MAPHEIGHT / h : 1;
+							d = MAPDEPTH < d ? (float)MAPDEPTH / d : 1;
+							file->scale = 0.98 * std::min(std::min(w, h), d);
+						}
+
+						Vec3d bbmin = newBbox.min().asVec3d(), bbmax = newBbox.max().asVec3d();
+						bbmin *= (double)file->scale; bbmax *= (double)file->scale;
+						newBbox = CoordBBox(Coord::floor(bbmin), Coord::floor(bbmax));
+						//rotate
+						newBbox.translate(Coord(file->trans.x, file->trans.y, file->trans.z));
+
+
+						ImGui::Text("Dimensions: [%d,%d,%d]x[%d,%d,%d] -> [%dx%dx%d]",
+							(int)newBbox.min().x(), (int)newBbox.min().y(), (int)newBbox.min().z(),
+							(int)newBbox.max().x(), (int)newBbox.max().y(), (int)newBbox.max().z(),
+							(int)newBbox.dim().x(), (int)newBbox.dim().y(), (int)newBbox.dim().z());
+
+						if (ImGui::Button("Import"))
+						{
+							world->Clear();
+
+							auto v = vdb::Transform(file->grid, file->trans, file->rot, make_float3(file->scale));
+							vdb::Inject(v);
+
+							delete file;
+							file = NULL;
+							path[0] = '\0';
+						}
+					}
+				}
+				ImGui::EndPopup();
 			}
-		} proc;
-		tbb::parallel_for(Injector::IterRange(grid->tree().cbeginValueOn()), proc);
-		std::cout << " inject MT " << t.elapsed() << std::endl;
-	}
+		}
+	};
+
 }
 
 
 util::camera cam;
+
+float3 ld{ 0.3,0.3,0 };
 
 void MyGame::Init()
 {
 	world = GetWorld();
 	cam.ct = mat4::LookAt(make_float3(MAPWIDTH, MAPHEIGHT * .66f, -MAPDEPTH * .66f), make_float3(MAPWIDTH / 2, MAPHEIGHT / 2, MAPDEPTH / 2));
 	openvdb::initialize();
+
+	RenderParams& p = GetWorld()->GetParams();
+	p.enableSR = 1;
+	p.lightDir = normalize(ld);
+	p.raycounts = make_int2(16, 4);
+	p.gain = 0.2;
+	p.scattering = make_float3(1.5, 1.5, 1.5);
+	p.absortion = make_float3(0.4, 0.2, 0.1); //1.5
+	p.steps = make_float2(1, 3);
 }
 void MyGame::KeyUp(int key)			{cam.keystates[key] = 0;}
 void MyGame::KeyDown(int key)		{cam.keystates[key] = 1;}
@@ -263,7 +338,7 @@ float3 activeDims;
 
 void MyGame::Tick( float deltaTime )
 {
-
+	printf("%f\n", deltaTime);
 	cam.update(deltaTime);
 	world->SetCameraMatrix(cam.ct);
 	
@@ -276,78 +351,34 @@ void MyGame::Tick( float deltaTime )
 			ImGui::OpenPopup("Import OpenVDB");
 		}
 
-		if (ImGui::Button("clear"))
+//		ImGui::ShowDemoWindow();
+
+		RenderParams& p = GetWorld()->GetParams();
+
+
 		{
-			world->Clear();
+			bool sr = p.enableSR == 0 ? false : true;
+			ImGui::Checkbox("ShadowRays", &sr);
+			p.enableSR = sr ? 1 : 0;
 		}
 
-		if (ImGui::BeginPopup("Import OpenVDB"))
 		{
-			ImGui::Text("Import new vdb");
-
-			static char path[MAX_PATH] = "";
-
-			bool changed = ImGui::InputText("File", path, MAX_PATH);
-			ImGui::SameLine();
-			if (ImGui::Button("..."))
-			{
-				const char* picked = util::Filepicker();
-				if (picked)
-				{
-					strcpy(path, picked);
-					changed = true;
-				}
-			}
-
-			
-			if (FileExists(path))
-			{				
-				static vdb::ImportingFile file;
-				if (changed)
-				{
-					file.Open(path);
-				}
-
-				ImGui::Text("Dimensions: [%d,%d,%d]x[%d,%d,%d] -> [%dx%dx%d]",
-					(int)file.bbox.min().x(), (int)file.bbox.min().y(), (int)file.bbox.min().z(),
-					(int)file.bbox.max().x(), (int)file.bbox.max().y(), (int)file.bbox.max().z(),
-					(int)file.bbox.dim().x(), (int)file.bbox.dim().y(), (int)file.bbox.dim().z());
-
-
-				CoordBBox newBbox = file.bbox;
-
-				static float3 trans = make_float3(0);
-				ImGui::DragFloat3("Translation", (float*)&trans);				
-
-				static float3 rot = make_float3(0);
-				ImGui::DragFloat3("Rotation", (float*)&rot);
-
-				static float scale = 1;
-				ImGui::SliderFloat("Scale", &scale, 0.01f, 5.0);
-
-				Vec3d bbmin = newBbox.min().asVec3d(), bbmax = newBbox.max().asVec3d();
-				bbmin *= (double)scale; bbmax *= (double)scale;
-				newBbox.reset(Coord::round(bbmin), Coord::round(bbmax));
-				//rotate
-				newBbox.translate(Coord(trans.x, trans.y, trans.z));
-
-				
-				ImGui::Text("Dimensions: [%d,%d,%d]x[%d,%d,%d] -> [%dx%dx%d]",
-					(int)newBbox.min().x(), (int)newBbox.min().y(), (int)newBbox.min().z(),
-					(int)newBbox.max().x(), (int)newBbox.max().y(), (int)newBbox.max().z(),
-					(int)newBbox.dim().x(), (int)newBbox.dim().y(), (int)newBbox.dim().z());
-
-				if (ImGui::Button("Import"))
-				{
-					world->Clear();
-
-					auto v = vdb::Load_cached(path, trans, rot, scale);
-					vdb::Inject(v);
-
-				}
-			}				
-			ImGui::EndPopup();
+			ImGui::SliderInt2("raycounts", (int*)&p.raycounts,1, 128);
+			ImGui::SliderFloat2("steps", (float*)&p.steps, 0, 10);
 		}
+		ImGui::SliderFloat("gain", &p.gain, 0, 1);
+
+		ImGui::SliderFloat3("scattering", (float*)&p.scattering, 0, 10);
+		ImGui::SliderFloat3("absortion", (float*)&p.absortion, 0, 10);
+
+
+		ImGui::SliderFloat("ld x", &p.lightDir.x, -1, 1);
+		ImGui::SliderFloat("ld y", &p.lightDir.y, -1, 1);
+		ImGui::SliderFloat("ld z", &p.lightDir.z, -1, 1);
+		p.lightDir = normalize(p.lightDir);
+
+		vdb::ImportingFile::ImportUI();
+
 		ImGui::End();
 	}
 

@@ -41,12 +41,14 @@ payload TraceRay( const float4 A, const float4 B, float* dist, float3* N, __read
 	{
 		// check main grid
 		const uint o = read_imageui( grid, (int4)(pos.x / BRICKDIM, pos.z / BRICKDIM, pos.y / BRICKDIM, 0 ) ).x;
-		if (o != 0) if ((o & 1) == 0) /* solid */ 
+		if (o != 0) 
+		if ((o & 1) == 0) // solid 
 		{ 
 			*dist = t, *N = -(float3)( (last == 0) * DIR_X, (last == 1) * DIR_Y, (last == 2) * DIR_Z );
 			return o >> 1; 
 		}
 		else // brick
+		
 		{
 			const float4 I = A + V * t;
 			uint p = (clamp( (uint)I.x, pos.x & BPMX, (pos.x & BPMX) + BMSK ) << 20) + 
@@ -125,6 +127,31 @@ float blueNoiseSampler( const __global uint* blueNoise, int x, int y, int sample
 
 #define GIRAYS	8
 
+float GetDensity(payload voxel, __constant struct RenderParams* params)
+{
+	float v = (float)voxel;
+	float min = params->dims.x, max = params->dims.y;
+	v = Remap(v, 0, 0xffff /*std::numeric_limits<payload>::max()*/, min, max);
+	return v;
+}
+
+float3 GetColor(payload voxel, __constant struct RenderParams* params)
+{
+	//return (float3)((voxel >> 5) * (1.0f / 7.0f), ((voxel >> 2) & 7) * (1.0f / 7.0f), (voxel & 3) * (1.0f / 3.0f));
+	float v = (float)voxel;
+	float min = params->dims.x, max = params->dims.y;
+	v = Remap(v, 0, 0xffff /*std::numeric_limits<payload>::max()*/, min, max);
+
+	//if (v < min) return (float3)(1, 0, 0);
+	//if (v > max) return (float3)(0, 0, 1);
+
+	//return mix((float3)(1, 0, 0), (float3)(0, 0, 1), v);
+	//if (v < 0) return (float3)(1, 1, 0);
+	if (v < 0) v *= -1;
+	//v = Remap(v, 0, max, 0, 1);
+	return (float3)(v, v, v);
+}
+
 __kernel void render( write_only image2d_t outimg, __constant struct RenderParams* params,
 	__read_only image3d_t grid, __global payload* brick, __global float4* sky, __global const uint* blueNoise )
 {
@@ -139,7 +166,7 @@ __kernel void render( write_only image2d_t outimg, __constant struct RenderParam
 	float dist;
 	float3 N;
 	const payload voxel = TraceRay( (float4)(params->E, 1), (float4)(D, 1), &dist, &N, grid, brick, 256 );
-
+	
 	// visualize result
 	float3 pixel;
 	if (IsPayloadEmpty(voxel))
@@ -153,8 +180,8 @@ __kernel void render( write_only image2d_t outimg, __constant struct RenderParam
 	}
 	else
 	{
-		const float3 BRDF1 = INVPI * (float3)((voxel >> 5) * (1.0f / 7.0f), ((voxel >> 2) & 7) * (1.0f / 7.0f), (voxel & 3) * (1.0f / 3.0f));
-	#if 1
+		const float3 BRDF1 = /*INVPI **/ GetDensity(voxel, params);
+	#if 0
 		float3 incoming = (float3)( 0, 0, 0 );
 		uint seed = WangHash( column * 171 + line * 1773 + params->R0 );
 		const float4 I = (float4)( params->E + D * dist, 1 );
@@ -177,7 +204,7 @@ __kernel void render( write_only image2d_t outimg, __constant struct RenderParam
 			}
 			else
 			{
-				float3 BRDF2 = INVPI * (float3)((voxel2 >> 5) * (1.0f / 7.0f), ((voxel2 >> 2) & 7) * (1.0f / 7.0f), (voxel2 & 3) * (1.0f / 3.0f));
+				float3 BRDF2 = INVPI * GetColor(voxel2, params);
 				// secondary hit
 			#if 1
 				incoming += BRDF2 * 2 * (
@@ -197,7 +224,9 @@ __kernel void render( write_only image2d_t outimg, __constant struct RenderParam
 		}
 		pixel = BRDF1 * incoming * (1.0f / GIRAYS);
 	#else
+		pixel = BRDF1;
 		// hardcoded lights - image based lighting, no visibility test
+	/*
 	#if 1
 		pixel = BRDF1 * 2 * (
 			(N.x * N.x) * ((-N.x + 1) * (float3)(NX0) + (N.x + 1) * (float3)(NX1)) +
@@ -213,6 +242,7 @@ __kernel void render( write_only image2d_t outimg, __constant struct RenderParam
 		if (N.z ==  1) pixel = (float3)(NZ1) * 4;
 		pixel *= BRDF1;
 	#endif
+	*/
 	#endif
 	}
 	write_imagef( outimg, (int2)(column, line), (float4)( pixel, 1 ) );
@@ -257,3 +287,122 @@ __kernel void commit( const int taskCount, __global uint* commit, __global uint*
 // bits for empty top-level grid cells didn't work.
 // Try instead: https://www.kalojanov.com/data/irregular_grid.pdf
 // as suggested by Guillaume Boissé.
+
+
+
+#define VOLUMERAYS	32
+#define SHADOWRAYS	4
+
+__kernel void render2( write_only image2d_t outimg, __constant struct RenderParams* params,
+	__read_only image3d_t grid, __global payload* brick, __global float4* sky, __global const uint* blueNoise )
+{
+	// produce primary ray for pixel
+	const int column = get_global_id( 0 );
+	const int line = get_global_id( 1 );
+	const float2 uv = (float2)((float)column * params->oneOverRes.x, (float)line * params->oneOverRes.y);
+	const float3 P = params->p0 + (params->p1 - params->p0) * uv.x + (params->p2 - params->p0) * uv.y;
+	const float3 D = normalize( P - params->E );
+
+	const float cutoff = 0.005f;
+	float3 pTrans = (float3)(1, 1, 1);
+	const float3 One = (float3)(1, 1, 1);
+	float3 pLumi = (float3)(0,0,0);
+	const float3 mScattering = params->scattering;
+	const float3 mAbsorption = params->absortion;
+	const float3 extinction = -mScattering-mAbsorption;
+	const float3 mLightColor = (float3)( 0.7, 0.7, 0.7);
+	const float3 lightDir = params->lightDir;
+	
+	const float3 albedo = mLightColor*mScattering/(mScattering+mAbsorption);//single scattering
+	const float pStep = params->steps.x;
+	const float sStep = params->steps.y;
+	const float sGain = params->gain;
+
+	float dist;
+	float3 N;
+	payload voxel = TraceRay( (float4)(params->E, 1), (float4)(D, 1), &dist, &N, grid, brick, 256 );
+	
+	// visualize result
+	float3 pixel;
+	if (IsPayloadEmpty(voxel))
+	{
+		// sky
+		const float3 T = (float3)(D.x, D.z, D.y);
+		const uint u = (uint)(5000 * SphericalPhi( T ) * INV2PI - 0.5f);
+		const uint v = (uint)(2500 * SphericalTheta( T ) * INVPI - 0.5f);
+		const uint idx = u + v * 5000;
+		pixel = (idx < 5000 * 2500) ? sky[idx].xyz : (float3)( 1 );
+	}
+	else
+	{
+		float3 start = params->E;
+		float3 rstart = params->E;
+		for( int i = 0; i < params->raycounts.x; i++ )
+		{
+			start = start + D * (dist + pStep);
+			rstart = rstart + D * dist;
+			float density = GetDensity(voxel, params);
+
+			if (density >= cutoff)
+			{
+				const float3 dT = exp(extinction * density * pStep);			
+			
+				float3 sTrans = (float3)(1, 1, 1);
+	
+				if (params->enableSR)
+				{
+					float3 sI = rstart;
+					const float4 sD = (float4)(lightDir,1);
+
+					for( int si = 0; si < params->raycounts.y; si++ )
+					{						
+						float sdist;
+						float3 N2;
+						payload shadow = TraceRay( (float4)(sI, 1), sD, &sdist, &N2, grid, brick, 256 );
+						if (IsPayloadEmpty(shadow))
+							break;
+						{		
+							float d = GetDensity(shadow, params);
+							if (d >= cutoff) 
+							{
+								sTrans *= exp(extinction * d * sStep/(1.0f+sStep*sGain));							
+							}
+						}
+						//else break;
+						sdist = max(sdist, 1.0f);
+						sI = sI + (float3)(sD.x, sD.y, sD.z) * (sdist *sStep);
+						
+						if (dot(sTrans, sTrans)<cutoff) 
+							break;	
+					}
+				}
+
+				pLumi += albedo * sTrans * pTrans * (One-dT);
+				pTrans *= dT;
+
+			}
+
+			if (dot(pTrans, pTrans)<cutoff) 
+			{
+				break;
+			}
+		
+			const float4 I = (float4)( start, 1 );			
+			dist = 0;
+			voxel = TraceRay( I, (float4)(D, 1), &dist, &N, grid, brick, 256 );
+
+		}
+
+
+		const float3 T = (float3)(D.x, D.z, D.y);
+		const uint u = (uint)(5000 * SphericalPhi( T ) * INV2PI - 0.5f);
+		const uint v = (uint)(2500 * SphericalTheta( T ) * INVPI - 0.5f);
+		const uint idx = u + v * 5000;
+		float3 skypixel = (idx < 5000 * 2500) ? sky[idx].xyz : (float3)( 1 );		
+
+		float a = (pTrans.x + pTrans.y + pTrans.z) / 3.f;
+		pixel = mix(skypixel, pLumi, 1.0f - a);
+	}
+
+	write_imagef( outimg, (int2)(column, line), (float4)( pixel, 1 ) );
+}

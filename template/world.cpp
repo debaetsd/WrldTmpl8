@@ -47,7 +47,7 @@ World::World( const uint targetID )
 	printf( "Allocated %iKB on CPU for bitfield.\n", (int)(BRICKCOUNT >> 15) );
 	printf( "Allocated %iMB on CPU for brickInfo.\n", (int)((BRICKCOUNT * sizeof( BrickInfo )) >> 20) );
 	// initialize kernels
-	renderer = new Kernel( "cl/kernels.cl", "render" );
+	renderer = new Kernel( "cl/kernels.cl", "render2" );
 	committer = new Kernel( renderer->GetProgram(), "commit" );
 	screen = new Buffer( targetID, Buffer::TARGET );
 	paramBuffer = new Buffer( sizeof( RenderParams ), Buffer::DEFAULT | Buffer::READONLY, &params );

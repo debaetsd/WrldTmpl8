@@ -48,6 +48,14 @@ struct RenderParams
 	float2 oneOverRes;
 	float3 E, p0, p1, p2;
 	uint R0, frame;
+	float2 dims;
+	uint enableSR;
+	float3 lightDir;
+	int2 raycounts;
+	float gain;
+	float3 scattering;
+	float3 absortion;
+	float2 steps;
 };
 
 // lighting for 6 normals for sky15.hdr
@@ -78,3 +86,9 @@ struct RenderParams
 #define TWOPI		6.28318530717958647692528f
 #define SQRT_PI_INV	0.56418958355f
 #define LARGE_FLOAT	1e34f
+
+
+inline float Remap(float value, float from1, float to1, float from2, float to2)
+{
+	return (value - from1) / (to1 - from1) * (to2 - from2) + from2;
+}

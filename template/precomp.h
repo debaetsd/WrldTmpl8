@@ -632,6 +632,11 @@ inline float4 smoothstep( float4 a, float4 b, float4 x )
 
 inline bool operator!=(float3 a, float3 b) { return (a.x != b.x) || (a.y != b.y) || (a.z != b.z); }
 
+inline float3& exp(float3 a)
+{
+	return make_float3(std::exp(a.x), std::exp(a.y), std::exp(a.z));
+}
+
 // axis aligned bounding box class
 class aabb
 {
